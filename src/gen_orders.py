@@ -56,4 +56,4 @@ orders += [[c, "B", p, q] for c, p, q in chosen]
 csv = pd.DataFrame(orders, columns=["证券代码", "买卖标志", "委托价格", "委托数量"])
 fn = f"orders_{today}.csv"
 csv.to_csv(fn, index=False, encoding="utf-8-sig")
-print(f"✅ 已生成: {fn}")
+logger.success(f"已生成 CSV: {fn}")
