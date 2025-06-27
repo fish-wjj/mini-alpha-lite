@@ -7,8 +7,8 @@
 """
 import datetime as dt
 import pandas as pd
-from utils import pro, get_today_universe
-from factor_model import score
+from src.utils import pro, get_today_universe
+from src.factor_model import score
 
 TOTAL_CASH = 50_000
 CORE_RATIO = 0.60
