@@ -19,7 +19,7 @@ CORE_ETF = "159949"
 LOT = 100  # 最小手数
 
 today = dt.date.today().strftime("%Y%m%d")
-print("• 拉数据 …")
+logger.info("拉取今日行情 & 因子…")
 df = get_today_universe()  # 不过滤成交额
 
 orders = []
