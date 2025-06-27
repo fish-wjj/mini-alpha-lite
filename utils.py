@@ -5,14 +5,14 @@
 2. 取最近交易日 (SSE)
 3. 拉当日所需因子：PE、PB、20d 动量
 """
-from dotenv import load_dotenv
-
-load_dotenv()  # 把 .env 写进 os.environ
-
 import os
 import datetime as dt
 import pandas as pd
 import tushare as ts
+
+from dotenv import load_dotenv
+
+load_dotenv()  # 把 .env 写进 os.environ
 
 TS_TOKEN = os.getenv("TUSHARE_TOKEN")
 if not TS_TOKEN:
