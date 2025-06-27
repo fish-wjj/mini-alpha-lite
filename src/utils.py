@@ -5,6 +5,7 @@
 2. 取最近交易日 (SSE)
 3. 拉当日所需因子：PE、PB、20d 动量
 """
+from src.logger import logger
 import os
 import datetime as dt
 import pandas as pd
