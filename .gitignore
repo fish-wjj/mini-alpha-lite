@@ -2,16 +2,11 @@
 db.sqlite
 orders_*.csv
 
-# Python cache
+# Bytecode / logs
 __pycache__/
 *.py[cod]
-
-# Logs
 *.log
 
-# Editor
+# IDE / editors
 .vscode/
 .idea/
-
-def z(s):
-    return (s - s.mean()) / s.std(ddof=0)
