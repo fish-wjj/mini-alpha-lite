@@ -12,3 +12,5 @@ __pycache__/
 # Editor
 .vscode/
 .idea/
+
+z = lambda s: (s - s.mean()) / s.std(ddof=0)
