@@ -13,4 +13,5 @@ __pycache__/
 .vscode/
 .idea/
 
-z = lambda s: (s - s.mean()) / s.std(ddof=0)
+def z(s):
+    return (s - s.mean()) / s.std(ddof=0)
