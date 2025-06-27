@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# —— 自动把本地改动同步到远程 —— #
-set -euo pipefail
+# 放到项目根目录，确保 chmod +x auto-sync.sh
+# 运行： ./auto-sync.sh     （建议用 screen 或 tmux 挂后台）
 
-WORKDIR="/mini-alpha-lite"
-cd "$WORKDIR"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$REPO_DIR" || exit 1
 
-# 确保存在 main 分支
-git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+BRANCH="main"        # 或其他分支名
+INTERVAL=2           # 两秒内批量归并事件，避免频繁 push
+LOGFILE="$REPO_DIR/auto-sync.log"
 
-echo "[auto-sync] watching $WORKDIR ..."
-# 持续监听：新增、修改、删除、移动 4 类事件
-while inotifywait -r -e modify,create,delete,move --exclude '\.git/' .; do
-  # 暂存所有改动（含删除）
-  git add -A
+echo "🔄 Auto-sync started in $REPO_DIR  →  branch: $BRANCH" | tee -a "$LOGFILE"
 
-  # 如果没有新内容就跳过
-  if git diff --cached --quiet; then
-    continue
+while true; do
+  # 监听写入 / 移动 / 删除事件，排除 .git 目录自身
+  inotifywait -qr -e modify,create,delete,move --exclude '\.git/' "$REPO_DIR"
+  sleep "$INTERVAL"
+
+  # 若工作区有变动
+  if ! git -C "$REPO_DIR" diff --quiet; then
+    TS=$(date '+%F %T')
+    git -C "$REPO_DIR" add -A
+    git -C "$REPO_DIR" commit -m "auto-sync: $TS" --author="auto-bot <>" \
+      && git -C "$REPO_DIR" pull --rebase \
+      && git -C "$REPO_DIR" push origin "$BRANCH"
+    echo "[$TS] synced ✔" | tee -a "$LOGFILE"
   fi
-
-  MSG="auto: $(date '+%F %T')"
-  git commit -m "$MSG" --author="sync-bot <sync@localhost>"
-  # 网络偶发失败也不退出
-  git push origin main || echo "[auto-sync] push failed, will retry on next change"
 done
