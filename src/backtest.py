@@ -59,7 +59,7 @@ if __name__ == "__main__":
     pro = ts.pro_api(os.getenv("TUSHARE_TOKEN"))
 
     trade_days = get_trade_calendar()
-    trade_days = trade_days[trade_days.day == 1]  # 仅取每月1号
+    trade_days = trade_days[pd.to_datetime(trade_days).dt.day == 1]
     equity = [1.0]  # 初始净值
     dates = []
 
