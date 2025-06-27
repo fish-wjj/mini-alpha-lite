@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite
+*.log
+
+# Env & secrets
+.env
+.env*
+
+# Orders & artifacts
+orders_*.csv
+
+# IDE
+.vscode/
+.idea/
