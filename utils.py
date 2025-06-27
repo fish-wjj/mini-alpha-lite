@@ -37,13 +37,9 @@ def latest_trade_date(back_days: int = 5) -> str:
 def get_today_universe() -> pd.DataFrame:
     trade_date = latest_trade_date()
 
-    daily = pro.daily(trade_date=trade_date)[
-        ["ts_code", "close", "pct_chg", "amount"]
-    ]
+    daily = pro.daily(trade_date=trade_date)[["ts_code", "close", "pct_chg", "amount"]]
 
-    basic = pro.daily_basic(
-        trade_date=trade_date, fields="ts_code,pe_ttm,pb"
-    )
+    basic = pro.daily_basic(trade_date=trade_date, fields="ts_code,pe_ttm,pb")
 
     # 20 日动量
     start = (
@@ -60,10 +56,9 @@ def get_today_universe() -> pd.DataFrame:
         .sum()
         .reset_index()
     )
-    mom = mom[
-        mom["level_1"]
-        == mom.groupby("ts_code")["level_1"].transform("max")
-    ][["ts_code", "pct_chg"]].rename(columns={"pct_chg": "pct_chg_20d"})
+    mom = mom[mom["level_1"] == mom.groupby("ts_code")["level_1"].transform("max")][
+        ["ts_code", "pct_chg"]
+    ].rename(columns={"pct_chg": "pct_chg_20d"})
 
     return (
         daily.merge(basic, on="ts_code", how="left")

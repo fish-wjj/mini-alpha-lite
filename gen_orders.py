@@ -47,16 +47,12 @@ for _, row in candidates.iterrows():
 # 如果仍不足 5 只，平均分现金再重算 qty
 if 0 < len(chosen) < NUM_ALPHA:
     cash_each = alpha_cash / len(chosen)
-    chosen = [
-        (c, p, int(cash_each // (p * LOT)) * LOT) for c, p, _ in chosen
-    ]
+    chosen = [(c, p, int(cash_each // (p * LOT)) * LOT) for c, p, _ in chosen]
 
 orders += [[c, "B", p, q] for c, p, q in chosen]
 
 # —— 写 CSV —— #
-csv = pd.DataFrame(
-    orders, columns=["证券代码", "买卖标志", "委托价格", "委托数量"]
-)
+csv = pd.DataFrame(orders, columns=["证券代码", "买卖标志", "委托价格", "委托数量"])
 fn = f"orders_{today}.csv"
 csv.to_csv(fn, index=False, encoding="utf-8-sig")
 print(f"✅ 已生成: {fn}")
