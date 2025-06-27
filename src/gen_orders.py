@@ -5,6 +5,7 @@
 • α 仓 5 只 × 6 %
   - 能买 ≥1 手(100 股) 即入选
 """
+from src.logger import logger
 import datetime as dt
 import pandas as pd
 from src.utils import pro, get_today_universe
