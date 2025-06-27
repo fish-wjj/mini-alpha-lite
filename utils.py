@@ -65,7 +65,3 @@ def get_today_universe() -> pd.DataFrame:
         .merge(mom, on="ts_code", how="left")
         .fillna(0)
     )
-
-
-def z(s):
-    return (s - s.mean()) / s.std(ddof=0)
