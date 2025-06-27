@@ -1,16 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*.sqlite
-*.log
-
-# Env & secrets
-.env
 .env*
-
-# Orders & artifacts
+db.sqlite
 orders_*.csv
 
-# IDE
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Logs
+*.log
+
+# Editor
 .vscode/
 .idea/
