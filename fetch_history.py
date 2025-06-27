@@ -3,7 +3,9 @@
 方便你后面做更复杂的因子或回测。不用也行。
 """
 
-import sqlite3, datetime as dt, tushare as ts, os
+import sqlite3
+import datetime as dt
+import tushare as ts
 from tqdm import tqdm
 from utils import TS_TOKEN
 
