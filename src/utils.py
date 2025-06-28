@@ -64,7 +64,6 @@ def _fetch_roa(trade_date: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["ts_code","roa"])
 # ...后半保持不变...
 
-
     # —— D) 20 日动量 & 波动率
     start40 = (
         dt.datetime.strptime(trade_date, "%Y%m%d") - dt.timedelta(days=40)
