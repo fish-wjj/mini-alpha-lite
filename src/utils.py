@@ -71,3 +71,27 @@ def get_today_universe() -> pd.DataFrame:
                .fillna(0))
     logger.success(f"行情拉取完成：{len(df)} 条")
     return df
+def ma_cross(trade_date: str, short: int = 50, long: int = 200) -> str:
+    """
+    判断指数均线状态：
+    - 'golden' : 50MA 上穿 200MA
+    - 'death'  : 50MA 下穿 200MA
+    - 'none'   : 其余
+    """
+    start = (dt.datetime.strptime(trade_date, "%Y%m%d") - dt.timedelta(days=long+30)).strftime("%Y%m%d")
+    idx = safe_query(
+        pro.index_daily,
+        ts_code="000300.SH",
+        start_date=start,
+        end_date=trade_date,
+        fields="trade_date,close"
+    ).sort_values("trade_date")
+    if len(idx) < long + 1:
+        return "none"
+    ma_s = idx["close"].rolling(short).mean()
+    ma_l = idx["close"].rolling(long).mean()
+    if ma_s.iat[-2] < ma_l.iat[-2] and ma_s.iat[-1] > ma_l.iat[-1]:
+        return "golden"
+    if ma_s.iat[-2] > ma_l.iat[-2] and ma_s.iat[-1] < ma_l.iat[-1]:
+        return "death"
+    return "none"
