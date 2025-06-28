@@ -10,3 +10,5 @@ stop_loss:       0.12          # 单票止损 (-12%)
 max_drawdown:    0.10          # 组合回撤阈值 (-10%)
 min_amount:      1e8           # 股票成交额过滤 ≥1 亿
 lot:             100           # A 股 1 手 = 100
+min_amount: 1e8        # 100,000,000 成交额过滤 (float)
+lot: 100               # 整数, 不要加引号
