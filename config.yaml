@@ -1,14 +1,15 @@
-# ===== 基础参数 =====
-cash:            50000         # 本金
-core_etf:        "510880.SH"   # 红利 ETF，历史较长
-core_ratio:      0.60          # ETF 权重
-alpha_ratio:     0.35          # α 仓总权重
-num_alpha:       5             # α 仓标的数
+# ===== 资产配置 =====
+cash:            50000        # 本金
+core_etf:        "510300.SH"  # 沪深300
+bond_etf:        "511010.SH"  # 10 年国债 ETF
+core_ratio:      0.60         # 核心股指 ETF 权重
+bond_ratio:      0.20         # 债券 ETF 权重
+alpha_ratio:     0.20         # α 仓权重
+num_alpha:       5
 
-# ===== 风控 =====
-stop_loss:       0.12          # 单票止损 (-12%)
-max_drawdown:    0.10          # 组合回撤阈值 (-10%)
-min_amount:      1e8           # 股票成交额过滤 ≥1 亿
-lot:             100           # A 股 1 手 = 100
-min_amount: 1e8        # 100,000,000 成交额过滤 (float)
-lot: 100               # 整数, 不要加引号
+# ===== 风控参数 =====
+stop_loss:       0.12         # 个股止损 12 %
+max_drawdown:    0.10         # 组合回撤 10 %
+trend_ma:        200          # 200 日均线趋势过滤
+min_amount:      1e8          # 股票成交额筛选 ≥1亿元
+lot:             100
