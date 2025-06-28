@@ -24,3 +24,11 @@ def score(df: pd.DataFrame, weights: dict[str,float] | None = None) -> pd.DataFr
     df["score"]  = sum(df[f] * w.get(f,0) for f in F_LIST)
     df["score"].fillna(0, inplace=True)
     return df.sort_values("score", ascending=False)
+WEIGHTS = {
+    "F_pe": 0.43,
+    "F_pb": 0.00,
+    "F_mom": 0.14,
+    "F_roa": 0.29,
+    "F_turn": 0.00,
+    "F_vol": 0.14,
+}
