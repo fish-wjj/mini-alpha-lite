@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+"""
+工具函数：
+  • latest_trade_date
+  • get_today_universe  ← 一次性拼出 6 因子所需全部字段
+"""
 from dotenv import load_dotenv; load_dotenv()
 import os, datetime as dt, pandas as pd, tushare as ts
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -25,33 +30,33 @@ def _last_quarter(date: str) -> str:
     q = ((m - 1) // 3) or 4
     if q == 4 and m < 4:
         y -= 1
-    return f"{y}0{q}31"          # 例: 20240331 / 20231231
+    return f"{y}0{q}31"        # 例: 20240331 / 20231231
 
 def get_today_universe() -> pd.DataFrame:
     trade_date = latest_trade_date()
     logger.info(f"获取交易日 {trade_date} 行情…")
 
-    # ——— 日行情 & 成交额 ———
+    # —— A) 日行情
     daily = safe_query(pro.daily, trade_date=trade_date)[
         ["ts_code", "close", "pct_chg", "amount"]
     ]
 
-    # ——— 日 basic 因子 ———
+    # —— B) 日 basic 因子
     basic = safe_query(
         pro.daily_basic,
         trade_date=trade_date,
         fields="ts_code,pe_ttm,pb,turnover_rate_f"
     )
 
-    # ——— ROA 最近财报 ———
+    # —— C) 最近财报 ROA
     roa_df = safe_query(
         pro.fina_indicator,
-        ts_code='',                          # 空串 = 全市场
+        ts_code='',                              # ⚠️ 关键：空串 = 全市场
         end_date=_last_quarter(trade_date),
         fields="ts_code,roa"
     )
 
-    # ——— 20 日动量 & 波动率 ———
+    # —— D) 20 日动量 & 波动率
     start40 = (
         dt.datetime.strptime(trade_date, "%Y%m%d") - dt.timedelta(days=40)
     ).strftime("%Y%m%d")
