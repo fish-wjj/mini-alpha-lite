@@ -15,7 +15,7 @@ from src.logger import logger
 
 # ─── 参数 ─────────────────────────────────────────────────────────── #
 START_DATE  = "20190101"
-CORE_ETF    = "159949.SZ"
+CORE_ETF = "510880.SH"   # or 515180.SH
 CORE_WGT    = 0.60
 NUM_ALPHA   = 5
 ALPHA_WGT   = (1 - CORE_WGT) / NUM_ALPHA
