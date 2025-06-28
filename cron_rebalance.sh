@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
-# 每周一 19:05 自动调用
-source /root/mini-alpha-lite/venv311/bin/activate
-python -m src.gen_orders
+cd /mini-alpha-lite
+source venv311/bin/activate
+# 仅在最近交易日执行
+python - <<'PY'
+from src.utils import latest_trade_date
+import datetime, os
+if datetime.date.today().strftime('%Y%m%d') == latest_trade_date():
+    os.system("python -m src.gen_orders")
+PY
