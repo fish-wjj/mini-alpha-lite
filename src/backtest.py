@@ -83,8 +83,12 @@ for day in tqdm(month_starts, desc="Backtest"):
     if end_day_dt > LATEST: break   # 未来月份跳出
     end_day = end_day_dt.strftime("%Y%m%d")
 
-    r_etf = (get_last_close(CORE_ETF, end_day) -
-             get_last_close(CORE_ETF, trd)) / get_last_close(CORE_ETF, trd)
+    try:
+        r_etf = (get_last_close(CORE_ETF, end_day) -
+                 get_last_close(CORE_ETF, trd)) / get_last_close(CORE_ETF, trd)
+    except ValueError as e:
+        logger.warning(str(e))
+        continue
 
     r_stock = np.mean([
         (get_last_close(c, end_day) - get_last_close(c, trd)) / get_last_close(c, trd)
