@@ -49,7 +49,6 @@ def get_today_universe() -> pd.DataFrame:
     for ts_code in stock_list['ts_code']:
         df = safe_query(
             pro.fina_indicator,
-            ts_code=ts_code,
             end_date=_last_quarter(trade_date),
             fields="ts_code,roa"
         )
