@@ -44,16 +44,12 @@ def get_today_universe() -> pd.DataFrame:
     )
 
     # ——— ROA 最近财报 ———
-    stock_list = safe_query(pro.stock_basic, exchange='', list_status='L', fields='ts_code')
-    roa_list = []
-    for ts_code in stock_list['ts_code']:
-        df = safe_query(
-            pro.fina_indicator,
-            end_date=_last_quarter(trade_date),
-            fields="ts_code,roa"
-        )
-        roa_list.append(df)
-    roa_df = pd.concat(roa_list, ignore_index=True)
+    roa_df = safe_query(
+        pro.fina_indicator,
+        ts_code='',                          # 空串 = 全市场
+        end_date=_last_quarter(trade_date),
+        fields="ts_code,roa"
+    )
 
     # ——— 20 日动量 & 波动率 ———
     start40 = (
