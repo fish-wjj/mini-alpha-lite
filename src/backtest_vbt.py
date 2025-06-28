@@ -34,3 +34,4 @@ pf = vbt.Portfolio.from_weights(
 )
 print(pf.stats())
 pf.plot().show()
+    
