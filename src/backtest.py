@@ -29,7 +29,11 @@ equity=[1.0]; dates=[]
 for d in tqdm(month_start):
     trd=d.strftime("%Y%m%d"); risk=is_risk_off(trd)
     uni=get_today_universe()
-    ranked=score(uni).head(cfg["num_alpha"]) if not risk else pd.DataFrame()
+    ranked = (
+        score(uni).head(cfg["num_alpha"])
+        if not risk
+        else pd.DataFrame(columns=["ts_code"])
+    )
     alpha=ranked["ts_code"].tolist()
     end=(d+pd.offsets.MonthEnd()).strftime("%Y%m%d")
     if end>latest_trade_date(): break
