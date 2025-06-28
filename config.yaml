@@ -1,0 +1,12 @@
+# ===== 基础参数 =====
+cash:            50000         # 本金
+core_etf:        "510880.SH"   # 红利 ETF，历史较长
+core_ratio:      0.60          # ETF 权重
+alpha_ratio:     0.35          # α 仓总权重
+num_alpha:       5             # α 仓标的数
+
+# ===== 风控 =====
+stop_loss:       0.12          # 单票止损 (-12%)
+max_drawdown:    0.10          # 组合回撤阈值 (-10%)
+min_amount:      1e8           # 股票成交额过滤 ≥1 亿
+lot:             100           # A 股 1 手 = 100
