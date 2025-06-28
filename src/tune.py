@@ -1,31 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-简易网格搜索 6 因子权重
-• 读取 2019-now 数据（月频取样 40 日行情 — 与回测一致）
-• 输出夏普最高的权重字典，可写回 factor_model.WEIGHTS
+快速网格搜索 6 因子权重
+- 仅抓一次 get_today_universe()，内存打分
+- 默认 3^6 ≈ 729 组；如想更细可把 GRID 改成 [0.05,0.10,...]
 """
-import itertools, json, pandas as pd, numpy as np
-from pathlib import Path
-from src.utils import get_today_universe, latest_trade_date, safe_query, pro
-from src.factor_model import score
+import itertools, json, numpy as np
+from src.utils import get_today_universe
+from src.factor_model import score, F_LIST
 
-WEIGHTS_GRID = [0.05, 0.10, 0.15, 0.20]
+GRID = [0.05, 0.10, 0.15]      # 权重步长 5%
+TOP_N = 50                      # 只看打分前 50 只
 
-FACTORS = ["F_pe","F_pb","F_mom","F_roa","F_turn","F_vol"]
+df = get_today_universe()       # ← 只拉一次
 
-def sharp_ratio(series: pd.Series) -> float:
-    return series.mean() / series.std(ddof=0)
-
-def eval_weights(ws: dict[str,float]) -> float:
-    df = score(get_today_universe(), ws).head(50)   # 只看 Top50
-    return df["score"].mean()
+def sharp_ratio(series):
+    return series.mean() / series.std(ddof=0) if series.std(ddof=0) else -9
 
 best_w, best_s = None, -9
-for comb in itertools.product(WEIGHTS_GRID, repeat=len(FACTORS)):
+
+for comb in itertools.product(GRID, repeat=len(F_LIST)):
     if abs(sum(comb) - 1.0) > 1e-6:
         continue
-    w = dict(zip(FACTORS, comb))
-    s = eval_weights(w)
+    w = dict(zip(F_LIST, comb))
+    top = score(df.copy(), w).head(TOP_N)
+    s   = sharp_ratio(top["score"])
     if s > best_s:
         best_s, best_w = s, w
 
