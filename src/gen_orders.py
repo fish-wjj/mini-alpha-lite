@@ -13,6 +13,7 @@ from src.config import load_cfg
 
 cfg = load_cfg()
 LOT = int(cfg["lot"])
+cfg["min_amount"] = float(cfg["min_amount"])
 
 # —— 路径
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
