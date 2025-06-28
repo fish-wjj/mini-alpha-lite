@@ -82,3 +82,5 @@ def get_today_universe() -> pd.DataFrame:
                 .fillna(0))
     logger.success(f"行情拉取完成：{len(df)} 条记录")
     return df
+
+    stock_list = safe_query(pro.stock_basic, exchange='', list_status='L', fields='ts_code')
