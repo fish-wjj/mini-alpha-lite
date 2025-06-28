@@ -1,15 +1,18 @@
-# ===== 资产配置 =====
-cash:            50000        # 本金
-core_etf:        "510300.SH"  # 沪深300
-bond_etf:        "511010.SH"  # 10 年国债 ETF
-core_ratio:      0.60         # 核心股指 ETF 权重
-bond_ratio:      0.20         # 债券 ETF 权重
-alpha_ratio:     0.20         # α 仓权重
-num_alpha:       5
+# ===== 核心资产配比 =====
+cash:            50000
+core_etf:        "510300.SH"   # 沪深300 ETF
+bond_etf:        "511010.SH"   # 10 年国债 ETF
+core_ratio:      0.60          # 核心指数
+bond_ratio:      0.10          # 债券缓冲
+alpha_ratio:     0.30          # α 个股
+
+num_alpha:       5             # α 仓股票数量
 
 # ===== 风控参数 =====
-stop_loss:       0.12         # 个股止损 12 %
-max_drawdown:    0.10         # 组合回撤 10 %
-trend_ma:        200          # 200 日均线趋势过滤
-min_amount:      1e8          # 股票成交额筛选 ≥1亿元
-lot:             100
+stop_loss:       0.12          # 个股止损 12 %
+max_drawdown:    0.08          # 组合回撤 8 %
+trend_ma:        200           # 大盘趋势过滤 (200MA)
+
+# ===== 其它 =====
+min_amount:      1e8           # 个股成交额 ≥1 亿
+lot:             100           # 股票最小成交单位
