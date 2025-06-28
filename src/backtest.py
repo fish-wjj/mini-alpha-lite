@@ -14,7 +14,7 @@ from src.factor_model import score
 from src.logger import logger
 
 # ─── 参数 ─────────────────────────────────────────────────────────── #
-START_DATE  = "20190101"
+START_DATE  = "20180101"
 CORE_ETF = "510880.SH"   # or 515180.SH
 CORE_WGT    = 0.60
 NUM_ALPHA   = 5
