@@ -24,8 +24,18 @@ CSV_DIR.mkdir(exist_ok=True)
 today = dt.date.today().strftime("%Y%m%d")
 df = get_today_universe()
 
-# 1) 过滤金额
-df = df[(df["amount"] >= cfg["min_amount"]) | df["ts_code"].str.startswith(("15","51","56"))]
+# 过滤股票金额；若筛完后股票为空，就直接用原 df
+stock_df = df[
+    (df["amount"] >= cfg["min_amount"])
+    & ~df["ts_code"].str.startswith(("15","51","56"))
+]
+if stock_df.empty:
+    logger.warning("成交额过滤后无股票可选，已放宽 amount 门槛")
+    stock_df = df[~df["ts_code"].str.startswith(("15","51","56"))]
+
+df_filtered = pd.concat([stock_df,
+                         df[df["ts_code"].str.startswith(("15","51","56"))]])
+
 
 # 2) 评分 & 选股
 alpha_df  = score(df).head(cfg["num_alpha"])
