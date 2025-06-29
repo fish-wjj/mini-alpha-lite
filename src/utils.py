@@ -147,3 +147,16 @@ def build_today_universe(trade_date: str | None = None) -> pd.DataFrame:
         vol = _calc_roll(hist, 20, "std").rename(columns={"pct_chg": "vol_20d"})
 
     df = (
+        daily.merge(basic, on="ts_code")
+        .merge(roa, on="ts_code", how="left")
+        .merge(mom, on="ts_code", how="left")
+        .merge(vol, on="ts_code", how="left")
+    )
+    df["roa"].fillna(0, inplace=True)
+    df[["pct_chg_20d", "vol_20d"]] = df[["pct_chg_20d", "vol_20d"]].fillna(0)
+    logger.success(f"行情截面 {td} → {len(df):,} 条")
+    return df
+
+
+# 兼容旧名字
+_build_universe = build_today_universe
