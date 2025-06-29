@@ -17,6 +17,7 @@ from tqdm import tqdm
 from loguru import logger
 
 from src.config import load_cfg
+# ★ 修改点：同时导入 latest_trade_date 和 prev_trade_date
 from src.utils import build_today_universe, latest_trade_date, prev_trade_date, safe_query, pro
 from src.factor_model import score
 
@@ -24,6 +25,7 @@ plt.switch_backend("Agg")  # 无显示环境也能画图
 
 CFG = load_cfg()
 START = "20180102"  # 第一调仓日前一天
+# ★ 修改点：使用 latest_trade_date
 END = latest_trade_date()       # 最新一个可用价
 
 REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
@@ -56,8 +58,13 @@ for i in tqdm(range(len(rebal_dates) - 1)):
     prev_d0 = prev_trade_date(d0.strftime("%Y%m%d"))
 
     # 1) 上月末数据 → 选股
+    # ★ 修改点：增加对 uni 是否为空的检查
     uni = build_today_universe(prev_d0)
-    alpha_codes = score(uni).head(CFG["num_alpha"])["ts_code"].tolist()
+    if uni.empty:
+        logger.warning(f"未能为 {prev_d0} 构建股票池，将使用空的股票列表进行下一步")
+        alpha_codes = []
+    else:
+        alpha_codes = score(uni).head(CFG["num_alpha"])["ts_code"].tolist()
 
     # 2) 补全股票价格
     need = [c for c in alpha_codes if c not in all_stock_px]
@@ -71,7 +78,9 @@ for i in tqdm(range(len(rebal_dates) - 1)):
                 fields="trade_date,close",
             ).set_index("trade_date")["close"]
             all_stock_px[c] = px
+            
     # 3) 当期收益
+    # ★ 修改点：替换为完整的健壮性检查和收益计算逻辑
     date0_str = d0.strftime("%Y%m%d")
     date1_str = d1.strftime("%Y%m%d")
 
@@ -112,6 +121,7 @@ for i in tqdm(range(len(rebal_dates) - 1)):
     ret = (CFG["core_ratio"] * r_etf +
            CFG["bond_ratio"] * r_bond +
            CFG["alpha_ratio"] * r_alpha_mean)
+
 
     equity.append(equity[-1] * (1 + ret))
     dates.append(d1)
