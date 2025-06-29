@@ -10,7 +10,7 @@ import pandas as pd
 from loguru import logger
 
 from src.config import load_cfg
-from src.utils import build_today_universe, latest_trade_date, q, pro
+from src.utils import build_today_universe, latest_trade_date, pro
 from src.factor_model import score
 
 # ───────────────────── 配置 & 常量 ─────────────────────
