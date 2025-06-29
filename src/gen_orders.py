@@ -128,8 +128,20 @@ if STATE_FP.exists():
     state = json.loads(STATE_FP.read_text())
 
 for sec_code, bs, price, qty in orders:
-    ts_code = (DF.loc[DF["ts_code"].str.startswith(sec_code), "ts_code"]
-               .iat[0] if not DF.empty else f"{sec_code}.SH")
+    matching_codes = DF.loc[DF["ts_code"].str.startswith(sec_code), "ts_code"]
+    if not matching_codes.empty:
+        ts_code = matching_codes.iat[0]
+    else:
+        # 如果在 DF 中未找到，很可能是ETF。手动添加后缀
+        # 简单规则：上交所ETF通常以'51'开头，深交所通常以'15'或'16'开头
+        if str(sec_code).startswith('5'):
+            ts_code = f"{sec_code}.SH"
+        elif str(sec_code).startswith('1'):
+            ts_code = f"{sec_code}.SZ"
+        else:
+            # 对于其他情况或未知的股票代码，默认后缀并记录警告
+            logger.warning(f"代码 {sec_code} 在行情截面中未找到，将默认使用 .SH 后缀更新仓位。")
+            ts_code = f"{sec_code}.SH"
     if bs == "B":
         info = state["position"].get(ts_code, {"cost": 0, "qty": 0})
         total_cost = info["cost"] * info["qty"] + (price or _px_of(sec_code, TD)) * qty
