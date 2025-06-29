@@ -47,8 +47,35 @@ def _add_etf(code6: str, ratio: float, lot: int):
         orders.append([code6, "B", 0, qty])
 
 # —— ETF 买单
-_add_etf(cfg["core_etf"],  cfg["core_ratio"],  LOT_STK)
-_add_etf(cfg["bond_etf"],  cfg["bond_ratio"],  LOT_BOND)
+# ---------- ETF 买单辅助 ----------
+def _add_etf(code: str, ratio: float, lot: int):
+    """
+    先在 today_universe 寻找股票日线；找不到则去 fund_daily 拉 ETF 当日收盘
+    :param code: 6 位或带 .SH/.SZ 后缀皆可
+    """
+    # 1) 尝试在 df 中查找
+    row = df.loc[df["ts_code"].str.startswith(code.split(".")[0]), "close"]
+
+    # 2) 若未找到，单独调用 fund_daily
+    if row.empty:
+        today = td  # latest_trade_date() 的返回值
+        try:
+            fund = q(pro.fund_daily, ts_code=code if "." in code else f"{code}.SH",
+                     trade_date=today, fields="close")
+        except Exception as e:
+            raise RuntimeError(f"拉取 ETF {code} 行情失败：{e}")
+
+        if fund.empty:
+            raise RuntimeError(f"找不到 {code} 当日行情，请检查代码或是否停牌")
+        px = float(fund["close"].iat[0])
+    else:
+        px = row.iat[0]
+
+    qty = int(cfg["cash"] * ratio // (px * lot)) * lot
+    if qty >= lot:
+        # 生成 6 位代码（批量下单模板不带后缀）
+        orders.append([code.split(".")[0], "B", 0, qty])
+
 
 # —— α 买单
 if alpha_codes:
