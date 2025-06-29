@@ -17,7 +17,7 @@ from tqdm import tqdm
 from loguru import logger
 
 from src.config import load_cfg
-from src.utils import build_today_universe, latest_trade_date, safe_query, pro
+from src.utils import build_today_universe, latest_trade_date, prev_trade_date, safe_query, pro
 from src.factor_model import score
 
 plt.switch_backend("Agg")  # 无显示环境也能画图
