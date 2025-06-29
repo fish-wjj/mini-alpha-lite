@@ -72,22 +72,46 @@ for i in tqdm(range(len(rebal_dates) - 1)):
             ).set_index("trade_date")["close"]
             all_stock_px[c] = px
     # 3) 当期收益
-    r_etf = (etf_px.loc[d1.strftime("%Y%m%d"), CFG["core_etf"]] /
-             etf_px.loc[d0.strftime("%Y%m%d"), CFG["core_etf"]] - 1)
-    r_bond = (etf_px.loc[d1.strftime("%Y%m%d"), CFG["bond_etf"]] /
-              etf_px.loc[d0.strftime("%Y%m%d"), CFG["bond_etf"]] - 1)
+date0_str = d0.strftime("%Y%m%d")
+    date1_str = d1.strftime("%Y%m%d")
 
+    # --- 计算 ETF 收益（增加健壮性检查）---
+    r_etf = 0.0
+    if CFG["core_etf"] in etf_px.columns and date0_str in etf_px.index and date1_str in etf_px.index:
+        px0 = etf_px.loc[date0_str, CFG["core_etf"]]
+        px1 = etf_px.loc[date1_str, CFG["core_etf"]]
+        if pd.notna(px0) and pd.notna(px1) and px0 > 0:
+            r_etf = (px1 / px0) - 1
+    else:
+        logger.warning(f"核心ETF {CFG['core_etf']} 在 {date0_str} 或 {date1_str} 缺少价格，当期收益计为 0")
+
+    r_bond = 0.0
+    if CFG["bond_etf"] in etf_px.columns and date0_str in etf_px.index and date1_str in etf_px.index:
+        px0 = etf_px.loc[date0_str, CFG["bond_etf"]]
+        px1 = etf_px.loc[date1_str, CFG["bond_etf"]]
+        if pd.notna(px0) and pd.notna(px1) and px0 > 0:
+            r_bond = (px1 / px0) - 1
+    else:
+        logger.warning(f"债券ETF {CFG['bond_etf']} 在 {date0_str} 或 {date1_str} 缺少价格，当期收益计为 0")
+
+    # --- 计算 Alpha 股票收益（增加健壮性检查）---
     r_alpha = []
     for c in alpha_codes:
-        px = all_stock_px[c]
-        if d0.strftime("%Y%m%d") in px.index and d1.strftime("%Y%m%d") in px.index:
-            r_alpha.append(px.loc[d1.strftime("%Y%m%d")] /
-                           px.loc[d0.strftime("%Y%m%d")] - 1)
-    r_alpha = np.mean(r_alpha) if r_alpha else 0
+        px_series = all_stock_px.get(c)
+        if px_series is not None and date0_str in px_series.index and date1_str in px_series.index:
+            px0 = px_series.loc[date0_str]
+            px1 = px_series.loc[date1_str]
+            if pd.notna(px0) and pd.notna(px1) and px0 > 0:
+                r_alpha.append(px1 / px0 - 1)
+        else:
+            logger.warning(f"Alpha股票 {c} 在 {date0_str} 或 {date1_str} 缺少价格，该股当期收益不计入")
+    
+    r_alpha_mean = np.mean(r_alpha) if r_alpha else 0
 
+    # --- 合并计算总收益 ---
     ret = (CFG["core_ratio"] * r_etf +
            CFG["bond_ratio"] * r_bond +
-           CFG["alpha_ratio"] * r_alpha)
+           CFG["alpha_ratio"] * r_alpha_mean)
 
     equity.append(equity[-1] * (1 + ret))
     dates.append(d1)
