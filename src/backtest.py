@@ -1,91 +1,107 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-月度回测（无前视）：
-* 调仓信号使用“前一交易日”截面
-* 一次性获取全市场价格，加速循环
+向量化回测（每月调仓，ETF + α 组合）
+* 用上一交易日因子打分选股，避免未来函数
+* 一次性拉所有价格，提高速度
 """
 from __future__ import annotations
+
 import datetime as dt
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from loguru import logger
 
-from src.utils import (trade_cal, latest_trade_date,
-                       get_universe_on, pro)
-from src.factor_model import score
 from src.config import load_cfg
-cfg = load_cfg()
+from src.utils import build_today_universe, prev_trade_date, safe_query, pro
+from src.factor_model import score
 
-START = "20180201"
-END   = latest_trade_date()
+plt.switch_backend("Agg")  # 无显示环境也能画图
+
+CFG = load_cfg()
+START = "20180102"  # 第一调仓日前一天
+END = prev_trade_date()       # 最新一个可用价
+
 REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
 REPORT_DIR.mkdir(exist_ok=True)
 
-# ── 1. 交易日 & 调仓日 ────────────────────────────────────────────────
-cal = trade_cal(exchange='SSE', start_date=START, end_date=END)
-open_days = pd.to_datetime(cal[cal["is_open"] == 1]["cal_date"]).sort_values()
-rebalance_dates = open_days.to_series().groupby([open_days.dt.year,
-                                                 open_days.dt.month]).first()
 
-# ── 2. 一次性下载价格 ─────────────────────────────────────────────────
-logger.info("下载全市场日线 …")
-all_codes = pro.stock_basic(exchange='', list_status='L', fields='ts_code')['ts_code'].tolist()
-etf_codes = [cfg["core_etf"], cfg["bond_etf"]]
-price_frames = []
-for code in tqdm(all_codes + etf_codes, desc="Fetch Price"):
-    df = pro.daily(ts_code=code, start_date=START, end_date=END, fields="ts_code,trade_date,close")
-    price_frames.append(df)
-price_raw = pd.concat(price_frames)
-price_mat = (price_raw.pivot(index='trade_date', columns='ts_code', values='close')
-                        .sort_index()
-                        .ffill())
+# ─────────────────── 交易日 & 调仓日 ───────────────────
+trade_days = safe_query(
+    pro.trade_cal, exchange="SSE", start_date=START, end_date=END
+)
+trade_days = pd.to_datetime(trade_days[trade_days.is_open == 1]["cal_date"])
+rebal_dates = trade_days.groupby([trade_days.dt.year, trade_days.dt.month]).first().tolist()
 
-# ── 3. 回测主循环 ────────────────────────────────────────────────────
+# ─────────────────── 一次性取价格 ────────────────────
+logger.info("下载 ETF 价格 …")
+etf_px = safe_query(
+    pro.fund_daily, ts_code=",".join([CFG["core_etf"], CFG["bond_etf"]]),
+    start_date=START, end_date=END, fields="ts_code,trade_date,close"
+).pivot(index="trade_date", columns="ts_code", values="close")
+
+logger.info("回测 …")
 equity = [1.0]
-dates  = []
+dates = []
 
-for i in tqdm(range(1, len(rebalance_dates)), desc="回测"):
-    signal_day = rebalance_dates.iloc[i-1]   # 用前一交易日做选股
-    exec_day   = rebalance_dates.iloc[i]     # 当月首日执行
-    signal_str = signal_day.strftime("%Y%m%d")
-    exec_str   = exec_day.strftime("%Y%m%d")
+all_stock_px: dict[str, pd.Series] = {}  # 动态累加已用股票价格
 
-    uni = get_universe_on(signal_str)
-    ranked = score(uni).head(cfg["num_alpha"])
-    alpha = ranked["ts_code"].tolist()
+for i in tqdm(range(len(rebal_dates) - 1)):
+    d0 = rebal_dates[i]          # 调仓日（当月首个交易日）
+    d1 = rebal_dates[i + 1]      # 下一个调仓日
+    prev_d0 = prev_trade_date(d0.strftime("%Y%m%d"))
 
-    # 本周期收益
-    if exec_str not in price_mat.index:
-        continue  # 极端情况：无价格
-    start_px = price_mat.loc[exec_str]
-    # 取到下个 rebalance_end（含当月最后一天）
-    end_px = price_mat.loc[rebalance_dates.iloc[i+1].strftime("%Y%m%d")] if i+1 < len(rebalance_dates) else price_mat.iloc[-1]
+    # 1) 上月末数据 → 选股
+    uni = build_today_universe(prev_d0)
+    alpha_codes = score(uni).head(CFG["num_alpha"])["ts_code"].tolist()
 
-    r_alpha = ((end_px[alpha] / start_px[alpha]) - 1).mean() if alpha else 0
-    r_core  = (end_px[cfg["core_etf"]] / start_px[cfg["core_etf"]] - 1)
-    r_bond  = (end_px[cfg["bond_etf"]] / start_px[cfg["bond_etf"]] - 1)
+    # 2) 补全股票价格
+    need = [c for c in alpha_codes if c not in all_stock_px]
+    if need:
+        for c in tqdm(need, desc="Fetch Stock", leave=False):
+            px = safe_query(
+                pro.daily,
+                ts_code=c,
+                start_date=d0.strftime("%Y%m%d"),
+                end_date=d1.strftime("%Y%m%d"),
+                fields="trade_date,close",
+            ).set_index("trade_date")["close"]
+            all_stock_px[c] = px
+    # 3) 当期收益
+    r_etf = (etf_px.loc[d1.strftime("%Y%m%d"), CFG["core_etf"]] /
+             etf_px.loc[d0.strftime("%Y%m%d"), CFG["core_etf"]] - 1)
+    r_bond = (etf_px.loc[d1.strftime("%Y%m%d"), CFG["bond_etf"]] /
+              etf_px.loc[d0.strftime("%Y%m%d"), CFG["bond_etf"]] - 1)
 
-    ret = (cfg["alpha_ratio"] * r_alpha +
-           cfg["core_ratio"]  * r_core  +
-           cfg["bond_ratio"]  * r_bond)
+    r_alpha = []
+    for c in alpha_codes:
+        px = all_stock_px[c]
+        if d0.strftime("%Y%m%d") in px.index and d1.strftime("%Y%m%d") in px.index:
+            r_alpha.append(px.loc[d1.strftime("%Y%m%d")] /
+                           px.loc[d0.strftime("%Y%m%d")] - 1)
+    r_alpha = np.mean(r_alpha) if r_alpha else 0
+
+    ret = (CFG["core_ratio"] * r_etf +
+           CFG["bond_ratio"] * r_bond +
+           CFG["alpha_ratio"] * r_alpha)
+
     equity.append(equity[-1] * (1 + ret))
-    dates.append(exec_day)
+    dates.append(d1)
 
-# ── 4. 报告输出 ──────────────────────────────────────────────────────
+# ─────────────────── 结果输出 ─────────────────────────
 rep = pd.DataFrame({"date": dates, "equity": equity[1:]})
-rep["ret"] = rep.equity.pct_change().fillna(0)
 rep["cummax"] = rep.equity.cummax()
 rep["drawdown"] = rep.equity / rep.cummax - 1
+rep["ret"] = rep.equity.pct_change().fillna(0)
 rep.to_csv(REPORT_DIR / "backtest_report.csv", index=False)
 
-plt.figure(figsize=(10,4))
+plt.figure(figsize=(9, 4))
 plt.plot(rep.date, rep.equity)
+plt.title("Equity Curve (2018-Now)")
 plt.tight_layout()
 plt.savefig(REPORT_DIR / "equity_curve.png")
-logger.success("回测完成 → reports/backtest_report.csv & equity_curve.png")
+logger.success(f"回测完成 → reports/backtest_report.csv & equity_curve.png")
