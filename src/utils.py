@@ -49,20 +49,22 @@ def latest_trade_date(n: int = 0) -> str:
     today = dt.datetime.today().strftime("%Y%m%d")
     cal   = _trade_cal("20160101", today).sort_values()
     return cal.iloc[-(n+1)].strftime("%Y%m%d")
+
 def prev_trade_date(current_date_str: str) -> str:
     """返回给定日期字符串(YYYYMMDD)的上一个交易日"""
-    cal = _trade_cal("20160101", current_date_str) # 获取到给定日期的所有交易日
+    # 获取到给定日期的所有历史交易日
+    cal = _trade_cal("20160101", current_date_str)
     if cal.empty:
         return None
-
+    
     # 将输入日期转为 datetime 对象，以便比较
     current_dt = pd.to_datetime(current_date_str)
-
-    # 筛选出早于给定日期的交易日并取最后一个
+    
+    # 筛选出严格早于给定日期的交易日并取最后一个
     prev_cal = cal[cal < current_dt]
     if not prev_cal.empty:
         return prev_cal.iloc[-1].strftime("%Y%m%d")
-
+    
     return None
 
 # ========== ROA ==========
@@ -108,6 +110,14 @@ def build_today_universe(td: str | None = None) -> pd.DataFrame:
     basic   = safe_query(pro.daily_basic, trade_date=td,
                          fields="ts_code,pe_ttm,pb,turnover_rate_f,total_mv")
 
+    # ========= ★ 修改点：新增检查逻辑 ★ =========
+    if daily.empty or 'ts_code' not in daily.columns:
+        logger.warning(f"无法获取 {td} 的日线行情数据，跳过当期截面构建")
+        return pd.DataFrame()
+    if basic.empty or 'ts_code' not in basic.columns:
+        logger.warning(f"无法获取 {td} 的日线基本指标数据，跳过当期截面构建")
+        return pd.DataFrame()
+
     # ---- 2. ROA ----
     quarter = td[:4] + f"{(int(td[4:6])-1)//3*3+1:02}01"     # 取上季度公告日
     roa = _fetch_roa(quarter)
@@ -134,5 +144,5 @@ def build_today_universe(td: str | None = None) -> pd.DataFrame:
     return df
 
 # -----------------------------------------------------------------------------
-# 其余旧接口（safe_query, pro）给历史脚本继续使用
+# ★ 修改点：导出 prev_trade_date
 __all__ = ["build_today_universe", "latest_trade_date", "prev_trade_date", "safe_query", "pro"]
