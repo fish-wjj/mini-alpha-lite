@@ -1,162 +1,123 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-工具函数集合：
-* build_today_universe()                 —— 生成当日（或指定日）截面 dataframe
-* latest_trade_date() / prev_trade_date —— 交易日查询
-* safe_query()                           —— tushare 带重试的查询
-* _fetch_roa()                           —— ROA 因子专用拉取（已做降级和兜底）
-"""
+# ──────────────────────────────────────────────────────────────
+#  utils.py  –  市场数据 / 截面构建 / 通用工具
+#  * 集中“因子打分”，让任何调用 build_today_universe()
+#    都自动带上一列 df['score']
+# ──────────────────────────────────────────────────────────────
 from __future__ import annotations
 
-import datetime as dt
-import os
-from functools import lru_cache
+import os, functools, datetime as dt
 from pathlib import Path
+from typing import Callable
 
+import numpy as np
 import pandas as pd
-import tushare as ts
+from tenacity import retry, stop_after_attempt, wait_fixed
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_random
+from dotenv import load_dotenv
+import tushare as ts
 
-# ─────────────────── tushare 初始化 ────────────────────
-TS_TOKEN = os.getenv("TS_TOKEN", "").strip()
+# ========== 环境变量 & Tushare 客户端 ==========
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")                       # 读取 .env
+TS_TOKEN = os.getenv("TUSHARE_TOKEN") or os.getenv("TS_TOKEN")
 if not TS_TOKEN:
-    raise RuntimeError("请在 .env 中设置 TS_TOKEN")
-pro = ts.pro_api(TS_TOKEN)
+    raise RuntimeError("请在 .env 中设置 TS_TOKEN 或 TUSHARE_TOKEN")
 
-# 缓存目录
-CACHE = Path(__file__).resolve().parent.parent / ".cache"
-CACHE.mkdir(exist_ok=True)
+pro = ts.pro_api(TS_TOKEN)                       # Tushare Pro 客户端
 
-# ──────────────────── 基础封装 ─────────────────────────
-def _today(fmt: str = "%Y%m%d") -> str:
-    return dt.datetime.now().strftime(fmt)
+# ========== 通用重试包装 ==========
+def safe_query(api_fn: Callable, **kwargs) -> pd.DataFrame:
+    """对 Tushare 查询加 3 次重试；出错时返回空 df"""
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    def _q():
+        logger.debug("tushare → {} {}", api_fn.__name__ if hasattr(api_fn, '__name__') else api_fn, kwargs)
+        return api_fn(**kwargs)
+    try:
+        return _q()
+    except Exception as e:                       # noqa: BLE001
+        logger.error("tushare 查询失败：{}", e)
+        return pd.DataFrame()
 
+# ========== 交易日 & 最新交易日 ==========
+def _trade_cal(start: str, end: str) -> pd.Series:
+    df = safe_query(pro.trade_cal,
+                    exchange="SSE", start_date=start, end_date=end)
+    return pd.to_datetime(df[df.is_open == 1]["cal_date"])
 
-@retry(stop=stop_after_attempt(3), wait=wait_random(min=1, max=2))
-def safe_query(fn, **kwargs) -> pd.DataFrame:
-    """给 tushare 接口加上重试 & 日志"""
-    name = getattr(fn, "__name__", str(fn))
-    logger.debug(f"tushare → {name} {kwargs}")
-    return fn(**kwargs)
+def latest_trade_date(n: int = 0) -> str:
+    """返回距今天 n 个交易日的日期字符串  YYYYMMDD"""
+    today = dt.datetime.today().strftime("%Y%m%d")
+    cal   = _trade_cal("20160101", today).sort_values()
+    return cal.iloc[-(n+1)].strftime("%Y%m%d")
 
-
-def latest_trade_date() -> str:
-    """返回最近一个交易日（含今天）"""
-    today = _today()
-    cal = safe_query(
-        pro.trade_cal,
-        exchange="SSE",
-        start_date=(dt.datetime.today() - dt.timedelta(days=7)).strftime("%Y%m%d"),
-        end_date=today,
-    )
-    trade_days = cal[cal.is_open == 1]["cal_date"].tolist()
-    return trade_days[-1]
-
-
-def prev_trade_date(date: str | None = None) -> str:
-    """返回 date 的前一个交易日；date 为空 => 取今天"""
-    if date is None:
-        date = latest_trade_date()
-    cal = safe_query(
-        pro.trade_cal,
-        exchange="SSE",
-        start_date=(dt.datetime.strptime(date, "%Y%m%d") - dt.timedelta(days=10)).strftime("%Y%m%d"),
-        end_date=date,
-    )
-    trade_days = cal[cal.is_open == 1]["cal_date"].tolist()
-    return trade_days[-2]
-
-
-# ──────────────────── ROA 单独处理 ─────────────────────
-@lru_cache(maxsize=8)
+# ========== ROA ==========
 def _fetch_roa(ann_date: str) -> pd.DataFrame:
-    """
-    取最近一次季报 ROA。如全部失败则返回空 df，外层会填 0.
-    """
-    try:
-        roa_df = safe_query(
-            pro.fina_indicator,
-            ann_date=ann_date,
-            fields="ts_code,roa"
-        )
-        if not roa_df.empty:
-            return roa_df
-    except Exception as e:
-        logger.warning(f"ROA 批量拉取失败({e})，尝试按季度…")
-
-    # 降级：以报表期查
-    try:
-        roa_df = safe_query(
-            pro.fina_indicator,
-            start_date=ann_date, end_date=ann_date,
-            fields="ts_code,roa"
-        )
-        return roa_df
-    except Exception as e:
-        logger.error(f"ROA 降级拉取仍失败({e})，返回空 df")
+    df = safe_query(pro.fina_indicator, ann_date=ann_date,
+                    fields="ts_code,roa")
+    if df.empty:                                # 尝试区间拉取
+        df = safe_query(pro.fina_indicator,
+                        start_date=ann_date, end_date=ann_date,
+                        fields="ts_code,roa")
+    if df.empty:
+        logger.warning("ROA 拉取失败，整列填 0")
         return pd.DataFrame(columns=["ts_code", "roa"])
-
-
-# ─────────────────── 今日截面 ──────────────────────────
-def _calc_roll(df: pd.DataFrame, win: int, func: str) -> pd.DataFrame:
-    """
-    df: ts_code, trade_date, pct_chg
-    返回：ts_code, value
-    """
-    df["trade_date"] = pd.to_datetime(df["trade_date"])
-    latest = df.trade_date.max()
-    g = df.set_index("trade_date").groupby("ts_code")["pct_chg"]
-    if func == "sum":
-        out = g.rolling(win).sum().reset_index()
-    elif func == "std":
-        out = g.rolling(win).std(ddof=0).reset_index()
-    else:
-        raise ValueError("func only support sum/std")
-    return out[out.trade_date == latest][["ts_code", "pct_chg"]]
-
-
-def build_today_universe(trade_date: str | None = None) -> pd.DataFrame:
-    """返回今日(或指定日)截面 dataframe，含基本面与技术面因子（股票池为A股全市场）"""
-    td = trade_date or latest_trade_date()
-    prev_td = prev_trade_date(td)
-
-    daily = safe_query(
-        pro.daily, trade_date=td, fields="ts_code,close,pct_chg,amount"
-    )
-    basic = safe_query(
-        pro.daily_basic,
-        trade_date=td,
-        fields="ts_code,pe_ttm,pb,turnover_rate_f,total_mv",
-    )
-    roa = _fetch_roa(_today("%Y%m") + "01")  # 退一步：本月1号近似为最新公告
-
-    # 20日动量 & 波动率
-    hist = safe_query(
-        pro.daily,
-        start_date=(dt.datetime.strptime(prev_td, "%Y%m%d") - dt.timedelta(days=40)).strftime("%Y%m%d"),
-        end_date=prev_td,
-        fields="ts_code,trade_date,pct_chg",
-    )
-    if hist.empty:
-        mom = pd.DataFrame(columns=["ts_code", "pct_chg_20d"])
-        vol = pd.DataFrame(columns=["ts_code", "vol_20d"])
-    else:
-        mom = _calc_roll(hist.copy(), 20, "sum").rename(columns={"pct_chg": "pct_chg_20d"})
-        vol = _calc_roll(hist, 20, "std").rename(columns={"pct_chg": "vol_20d"})
-
-    df = (
-        daily.merge(basic, on="ts_code")
-        .merge(roa, on="ts_code", how="left")
-        .merge(mom, on="ts_code", how="left")
-        .merge(vol, on="ts_code", how="left")
-    )
     df["roa"].fillna(0, inplace=True)
-    df[["pct_chg_20d", "vol_20d"]] = df[["pct_chg_20d", "vol_20d"]].fillna(0)
+    return df
+
+# ========== 辅助：滚动动量 / 波动率 ==========
+def _rolling(df: pd.DataFrame, win: int, how: str) -> pd.DataFrame:
+    g = (df.set_index("trade_date")
+           .groupby("ts_code")["pct_chg"]
+           .rolling(win))
+    if how == "sum":
+        res = g.sum()
+    elif how == "std":
+        res = g.std(ddof=0)
+    else:
+        raise ValueError("how 必须是 'sum' 或 'std'")
+    res = res.reset_index()
+    last_day = df.trade_date.max()
+    res = res[res.trade_date == last_day][["ts_code", "pct_chg"]]
+    return res.rename(columns={"pct_chg": f"pct_chg_{win}d" if how=="sum" else f"vol_{win}d"})
+
+# ========== 今天的市场截面 ==========
+def build_today_universe(td: str | None = None) -> pd.DataFrame:
+    """
+    组装单日截面并自动打分：
+    返回字段 >>>  原始行情字段 + 各类因子列 + [score]
+    """
+    td = td or latest_trade_date()
+    # ---- 1. 基础行情 ----
+    daily   = safe_query(pro.daily,        trade_date=td,
+                         fields="ts_code,close,pct_chg,amount")
+    basic   = safe_query(pro.daily_basic, trade_date=td,
+                         fields="ts_code,pe_ttm,pb,turnover_rate_f,total_mv")
+
+    # ---- 2. ROA ----
+    quarter = td[:4] + f"{(int(td[4:6])-1)//3*3+1:02}01"     # 取上季度公告日
+    roa = _fetch_roa(quarter)
+
+    # ---- 3. 动量 & 波动率（20 日）----
+    start = (dt.datetime.strptime(td, "%Y%m%d") - dt.timedelta(days=40)).strftime("%Y%m%d")
+    hist  = safe_query(pro.daily, start_date=start, end_date=td,
+                       fields="ts_code,trade_date,pct_chg")
+    mom = _rolling(hist, 20, "sum") if not hist.empty else pd.DataFrame()
+    vol = _rolling(hist, 20, "std") if not hist.empty else pd.DataFrame()
+
+    # ---- 4. 合并 ----
+    df = (daily.merge(basic, on="ts_code")
+               .merge(roa,  on="ts_code", how="left")
+               .merge(mom,  on="ts_code", how="left")
+               .merge(vol,  on="ts_code", how="left")
+               .fillna(0))
+
+    # ---- 5. 因子打分（关键新增）----
+    from src.factor_model import score as factor_score    # 延迟导入避免循环引用
+    df = factor_score(df)                                # ← 生成 df['score']
+
     logger.success(f"行情截面 {td} → {len(df):,} 条")
     return df
 
-
-# 兼容旧名字
-_build_universe = build_today_universe
+# -----------------------------------------------------------------------------
+# 其余旧接口（safe_query, pro）给历史脚本继续使用
+__all__ = ["build_today_universe", "latest_trade_date", "safe_query", "pro"]
