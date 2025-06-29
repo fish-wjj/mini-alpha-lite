@@ -17,14 +17,14 @@ from tqdm import tqdm
 from loguru import logger
 
 from src.config import load_cfg
-from src.utils import build_today_universe, prev_trade_date, safe_query, pro
+from src.utils import build_today_universe, latest_trade_date, safe_query, pro
 from src.factor_model import score
 
 plt.switch_backend("Agg")  # 无显示环境也能画图
 
 CFG = load_cfg()
 START = "20180102"  # 第一调仓日前一天
-END = prev_trade_date()       # 最新一个可用价
+END = latest_trade_date()       # 最新一个可用价
 
 REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
 REPORT_DIR.mkdir(exist_ok=True)
