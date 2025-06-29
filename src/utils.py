@@ -49,6 +49,21 @@ def latest_trade_date(n: int = 0) -> str:
     today = dt.datetime.today().strftime("%Y%m%d")
     cal   = _trade_cal("20160101", today).sort_values()
     return cal.iloc[-(n+1)].strftime("%Y%m%d")
+def prev_trade_date(current_date_str: str) -> str:
+    """返回给定日期字符串(YYYYMMDD)的上一个交易日"""
+    cal = _trade_cal("20160101", current_date_str) # 获取到给定日期的所有交易日
+    if cal.empty:
+        return None
+
+    # 将输入日期转为 datetime 对象，以便比较
+    current_dt = pd.to_datetime(current_date_str)
+
+    # 筛选出早于给定日期的交易日并取最后一个
+    prev_cal = cal[cal < current_dt]
+    if not prev_cal.empty:
+        return prev_cal.iloc[-1].strftime("%Y%m%d")
+
+    return None
 
 # ========== ROA ==========
 def _fetch_roa(ann_date: str) -> pd.DataFrame:
@@ -120,4 +135,4 @@ def build_today_universe(td: str | None = None) -> pd.DataFrame:
 
 # -----------------------------------------------------------------------------
 # 其余旧接口（safe_query, pro）给历史脚本继续使用
-__all__ = ["build_today_universe", "latest_trade_date", "safe_query", "pro"]
+__all__ = ["build_today_universe", "latest_trade_date", "prev_trade_date", "safe_query", "pro"]
