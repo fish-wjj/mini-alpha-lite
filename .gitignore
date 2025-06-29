@@ -1,20 +1,24 @@
+# 秘密/环境配置
+# Secrets / Environment variables
 .env*
 db.sqlite
-*.csv
 
-# Bytecode / logs
+# 日志 / 缓存
+# Logs / Caches
+*.log
 __pycache__/
 *.py[cod]
-*.log
 
-# IDE / editors
+# IDE / 编辑器配置
+# IDE / Editor specific
 .vscode/
 .idea/
-# secrets
-.env*
-db.sqlite
 
-# 忽略名为 venv311 的虚拟环境文件夹
-venv311/
+# 虚拟环境
+# Virtual environments
 venv/
+venv311/
 
+# 数据文件 (根据项目需求决定是否保留)
+# Data files (decide based on project needs)
+# *.csv
