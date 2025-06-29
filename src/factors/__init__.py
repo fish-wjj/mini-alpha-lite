@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 def industry_momentum(df: pd.DataFrame) -> pd.Series:
     """示例：把 ts_code 后三位映射申万一级行业指数涨幅"""
     # 假数据：随机行业涨幅
