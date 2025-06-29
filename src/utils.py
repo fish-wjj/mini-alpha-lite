@@ -1,139 +1,149 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-通用工具集：
-* Tushare 安全调用
-* 今日 / 指定日 市场截面数据
+工具函数集合：
+* build_today_universe()                 —— 生成当日（或指定日）截面 dataframe
+* latest_trade_date() / prev_trade_date —— 交易日查询
+* safe_query()                           —— tushare 带重试的查询
+* _fetch_roa()                           —— ROA 因子专用拉取（已做降级和兜底）
 """
 from __future__ import annotations
+
 import datetime as dt
 import os
-import json
-from functools import wraps
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
-from loguru import logger
 import tushare as ts
+from loguru import logger
+from tenacity import retry, stop_after_attempt, wait_random
 
-# ── 全局缓存 ───────────────────────────────────────────────────────────
-CACHE: dict[str, pd.DataFrame] = {}
+# ─────────────────── tushare 初始化 ────────────────────
+TS_TOKEN = os.getenv("TS_TOKEN", "").strip()
+if not TS_TOKEN:
+    raise RuntimeError("请在 .env 中设置 TS_TOKEN")
+pro = ts.pro_api(TS_TOKEN)
 
-# 读取 token
-TOKEN = os.getenv("TUSHARE_TOKEN") or json.load(open(".env.json"))["TUSHARE_TOKEN"]
-pro = ts.pro_api(TOKEN)
+# 缓存目录
+CACHE = Path(__file__).resolve().parent.parent / ".cache"
+CACHE.mkdir(exist_ok=True)
 
-LOT_STK = 100      # 股票一手
-LOT_ETF = 10       # ETF 一手
-
-
-# ── 安全包装 ───────────────────────────────────────────────────────────
-def safe_query(func, **kwargs):
-    """简单的指数退避重试"""
-    tries = 3
-    for i in range(tries):
-        try:
-            return func(**kwargs)
-        except Exception as e:
-            if i == tries - 1:
-                raise
-            logger.warning(f"{func.__name__} 调用失败({e})，第 {i+1}/{tries} 次重试…")
+# ──────────────────── 基础封装 ─────────────────────────
+def _today(fmt: str = "%Y%m%d") -> str:
+    return dt.datetime.now().strftime(fmt)
 
 
-# ── 交易日工具 ─────────────────────────────────────────────────────────
-@wraps(pro.trade_cal)
-def trade_cal(**kwargs):
-    key = f"trade_cal-{kwargs}"
-    if key not in CACHE:
-        CACHE[key] = safe_query(pro.trade_cal, **kwargs)
-    return CACHE[key].copy()
+@retry(stop=stop_after_attempt(3), wait=wait_random(min=1, max=2))
+def safe_query(fn, **kwargs) -> pd.DataFrame:
+    """给 tushare 接口加上重试 & 日志"""
+    name = getattr(fn, "__name__", str(fn))
+    logger.debug(f"tushare → {name} {kwargs}")
+    return fn(**kwargs)
+
 
 def latest_trade_date() -> str:
-    """返回最新开市日（YYYYMMDD）"""
-    today = dt.datetime.today().strftime("%Y%m%d")
-    cal = trade_cal(exchange='SSE', start_date='20200101', end_date=today)
-    return cal[cal["is_open"] == 1]["cal_date"].max()
+    """返回最近一个交易日（含今天）"""
+    today = _today()
+    cal = safe_query(
+        pro.trade_cal,
+        exchange="SSE",
+        start_date=(dt.datetime.today() - dt.timedelta(days=7)).strftime("%Y%m%d"),
+        end_date=today,
+    )
+    trade_days = cal[cal.is_open == 1]["cal_date"].tolist()
+    return trade_days[-1]
 
 
-# ── ROA 拉取（有问题时兜底为 0） ───────────────────────────────────────
+def prev_trade_date(date: str | None = None) -> str:
+    """返回 date 的前一个交易日；date 为空 => 取今天"""
+    if date is None:
+        date = latest_trade_date()
+    cal = safe_query(
+        pro.trade_cal,
+        exchange="SSE",
+        start_date=(dt.datetime.strptime(date, "%Y%m%d") - dt.timedelta(days=10)).strftime("%Y%m%d"),
+        end_date=date,
+    )
+    trade_days = cal[cal.is_open == 1]["cal_date"].tolist()
+    return trade_days[-2]
+
+
+# ──────────────────── ROA 单独处理 ─────────────────────
+@lru_cache(maxsize=8)
 def _fetch_roa(ann_date: str) -> pd.DataFrame:
+    """
+    取最近一次季报 ROA。如全部失败则返回空 df，外层会填 0.
+    """
     try:
-        df = safe_query(
+        roa_df = safe_query(
             pro.fina_indicator,
-            period=ann_date,
+            ann_date=ann_date,
             fields="ts_code,roa"
         )
-        return df
+        if not roa_df.empty:
+            return roa_df
     except Exception as e:
-        logger.warning(f"ROA 拉取失败({e})，整列填 0")
-        return pd.DataFrame({"ts_code": [], "roa": []})
+        logger.warning(f"ROA 批量拉取失败({e})，尝试按季度…")
+
+    # 降级：以报表期查
+    try:
+        roa_df = safe_query(
+            pro.fina_indicator,
+            start_date=ann_date, end_date=ann_date,
+            fields="ts_code,roa"
+        )
+        return roa_df
+    except Exception as e:
+        logger.error(f"ROA 降级拉取仍失败({e})，返回空 df")
+        return pd.DataFrame(columns=["ts_code", "roa"])
 
 
-def _build_universe(trade_date: str) -> pd.DataFrame:
-    """按指定交易日构建全市场截面"""
+# ─────────────────── 今日截面 ──────────────────────────
+def _calc_roll(df: pd.DataFrame, win: int, func: str) -> pd.DataFrame:
+    """
+    df: ts_code, trade_date, pct_chg
+    返回：ts_code, value
+    """
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    latest = df.trade_date.max()
+    g = df.set_index("trade_date").groupby("ts_code")["pct_chg"]
+    if func == "sum":
+        out = g.rolling(win).sum().reset_index()
+    elif func == "std":
+        out = g.rolling(win).std(ddof=0).reset_index()
+    else:
+        raise ValueError("func only support sum/std")
+    return out[out.trade_date == latest][["ts_code", "pct_chg"]]
+
+
+def build_today_universe(trade_date: str | None = None) -> pd.DataFrame:
+    """返回今日(或指定日)截面 dataframe，含基本面与技术面因子（股票池为A股全市场）"""
+    td = trade_date or latest_trade_date()
+    prev_td = prev_trade_date(td)
+
     daily = safe_query(
-        pro.daily,
-        trade_date=trade_date,
-        fields="ts_code,close,pct_chg,amount"
+        pro.daily, trade_date=td, fields="ts_code,close,pct_chg,amount"
     )
     basic = safe_query(
         pro.daily_basic,
-        trade_date=trade_date,
-        fields="ts_code,pe_ttm,pb,turnover_rate_f,total_mv,industry"
+        trade_date=td,
+        fields="ts_code,pe_ttm,pb,turnover_rate_f,total_mv",
     )
-    roa = _fetch_roa(_last_quarter(trade_date))
+    roa = _fetch_roa(_today("%Y%m") + "01")  # 退一步：本月1号近似为最新公告
 
-    # —— 计算 20d / 126d 动量 & 20d 波动率 ——
-    start = (pd.to_datetime(trade_date) - dt.timedelta(days=260)).strftime("%Y%m%d")
+    # 20日动量 & 波动率
     hist = safe_query(
         pro.daily,
-        start_date=start,
-        end_date=trade_date,
-        fields="ts_code,trade_date,pct_chg"
+        start_date=(dt.datetime.strptime(prev_td, "%Y%m%d") - dt.timedelta(days=40)).strftime("%Y%m%d"),
+        end_date=prev_td,
+        fields="ts_code,trade_date,pct_chg",
     )
     if hist.empty:
-        daily["pct_chg_20d"] = 0
-        daily["pct_chg_126d"] = 0
-        daily["vol_20d"] = 0
-        df = daily
+        mom = pd.DataFrame(columns=["ts_code", "pct_chg_20d"])
+        vol = pd.DataFrame(columns=["ts_code", "vol_20d"])
     else:
-        hist["trade_date"] = pd.to_datetime(hist["trade_date"])
-        g = hist.set_index("trade_date").groupby("ts_code")["pct_chg"]
-        mom20 = g.rolling(20).sum().reset_index()
-        mom126 = g.rolling(126).sum().reset_index()
-        vol20 = g.rolling(20).std(ddof=0).reset_index()
+        mom = _calc_roll(hist.copy(), 20, "sum").rename(columns={"pct_chg": "pct_chg_20d"})
+        vol = _calc_roll(hist, 20, "std").rename(columns={"pct_chg": "vol_20d"})
 
-        mom20 = mom20[mom20["trade_date"] == pd.to_datetime(trade_date)].rename(columns={"pct_chg": "pct_chg_20d"})
-        mom126 = mom126[mom126["trade_date"] == pd.to_datetime(trade_date)].rename(columns={"pct_chg": "pct_chg_126d"})
-        vol20 = vol20[vol20["trade_date"] == pd.to_datetime(trade_date)].rename(columns={"pct_chg": "vol_20d"})
-
-        df = (daily.merge(basic, on="ts_code")
-                    .merge(roa, on="ts_code", how="left")
-                    .merge(mom20[["ts_code", "pct_chg_20d"]], on="ts_code", how="left")
-                    .merge(mom126[["ts_code", "pct_chg_126d"]], on="ts_code", how="left")
-                    .merge(vol20[["ts_code", "vol_20d"]], on="ts_code", how="left")
-                    .fillna(0))
-
-    logger.success(f"行情截面 {trade_date} → {len(df)} 条")
-    return df
-
-
-# ── 对外接口 ───────────────────────────────────────────────────────────
-def get_today_universe() -> pd.DataFrame:
-    """最新交易日全市场截面"""
-    return _build_universe(latest_trade_date())
-
-def get_universe_on(trade_date: str | pd.Timestamp) -> pd.DataFrame:
-    """指定交易日截面"""
-    trade_date = pd.Timestamp(trade_date).strftime("%Y%m%d")
-    return _build_universe(trade_date)
-
-
-# ── 私有辅助 ───────────────────────────────────────────────────────────
-def _last_quarter(ymd: str) -> str:
-    """给定 YYYYMMDD 返回上一季报的 period 字符串"""
-    d = dt.datetime.strptime(ymd, "%Y%m%d")
-    q = (d.month - 1) // 3  # 0~3
-    q_end_month = (q * 3) or 12
-    year = d.year if q else d.year - 1
-    return f"{year}{q_end_month:02d}31"
+    df = (
