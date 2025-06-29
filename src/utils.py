@@ -160,6 +160,3 @@ def build_today_universe(trade_date: str | None = None) -> pd.DataFrame:
 
 # 兼容旧名字
 _build_universe = build_today_universe
-
-# 例如
-from some_orm import q
