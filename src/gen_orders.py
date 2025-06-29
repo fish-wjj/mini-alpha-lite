@@ -1,145 +1,160 @@
 # -*- coding: utf-8 -*-
 """
-周频再平衡脚本（含持仓状态更新）
-------------------------------------------------
-1. 读取最新截面 → 生成买 / 卖 CSV
-2. 止损 / 止盈（take_profit, stop_loss）自动写卖单
-3. 买卖完成后，把持仓写回 state_portfolio.json
+按周再平衡生成交易指令
+--------------------------------------------------
+* 读取最新截面数据 → 选股
+* 同时处理核心 ETF / 债基 ETF 配置
+* 根据 stop_loss / take_profit 更新并保存持仓状态
+* 输出 资金指令 CSV（银河证券格式） + 更新 state_portfolio.json
 """
-import json, datetime as dt, pathlib, pandas as pd
+from __future__ import annotations
+import datetime as dt
+import json
+from pathlib import Path
+from typing import List, Dict
+
+import pandas as pd
+from loguru import logger
+
 from src.config import load_cfg
-from src.utils import get_today_universe, risk_off, latest_trade_date
 from src.factor_model import score
-from src.logger import logger
+from src.utils import (
+    get_today_universe,
+    latest_trade_date,
+    LOT_STK, LOT_ETF
+)
 
-# ---------------- 参数与常量 ----------------
-cfg = load_cfg()
-BASE = pathlib.Path(__file__).resolve().parent.parent
-STATE_FP = BASE / "state_portfolio.json"
-CSV_DIR  = BASE / "orders"; CSV_DIR.mkdir(exist_ok=True)
+CFG = load_cfg()
+CSV_DIR = Path(__file__).resolve().parent.parent / "orders"
+CSV_DIR.mkdir(exist_ok=True)
+STATE_FP = Path(__file__).resolve().parent.parent / "state_portfolio.json"
 
-LOT_STK  = cfg["lot"]          # 100 股/手
-LOT_BOND = 10                  # 债券 ETF 1 手 10 份
+td: str = latest_trade_date()
+df: pd.DataFrame = get_today_universe()           # 今日截面
+df = score(df).head(CFG["num_alpha"])             # Alpha Top-N
 
-# ---------------- 1) 今日行情 ----------------
-td = latest_trade_date()
-df = get_today_universe()
-is_risk_off = risk_off(td)
+orders: List[list] = []   # [sec_code6, B/S, price, qty]
+cash_left: float = CFG["cash"]                    # 剩余现金，用于买 ETF
 
-# ---------------- 2) α 选股 -----------------
-alpha_codes = []
-if not is_risk_off:
-    alpha_codes = score(df).head(cfg["num_alpha"])["ts_code"].tolist()
-
-# ---------------- 3) 买单列表 ----------------
-orders: list[list] = []
-
-def _add_etf(code6: str, ratio: float, lot: int):
-    """
-    根据 6 位代码前缀匹配 ts_code，支持 510300 / 510300.SH 两种写法
-    """
-    row = df.loc[df["ts_code"].str.startswith(code6), "close"]
-    if row.empty:
-        raise RuntimeError(f"找不到 {code6} 当日行情，请检查 ETF 代码或是否停牌")
-    px  = row.iat[0]
-    qty = int(cfg["cash"] * ratio // (px * lot)) * lot
-    if qty >= lot:
-        orders.append([code6, "B", 0, qty])
-
-# —— ETF 买单
-# ---------- ETF 买单辅助 ----------
-def _add_etf(code: str, ratio: float, lot: int):
-    """
-    先在 today_universe 寻找股票日线；找不到则去 fund_daily 拉 ETF 当日收盘
-    :param code: 6 位或带 .SH/.SZ 后缀皆可
-    """
-    # 1) 尝试在 df 中查找
-    row = df.loc[df["ts_code"].str.startswith(code.split(".")[0]), "close"]
-
-    # 2) 若未找到，单独调用 fund_daily
-    if row.empty:
-        today = td  # latest_trade_date() 的返回值
-        try:
-            fund = q(pro.fund_daily, ts_code=code if "." in code else f"{code}.SH",
-                     trade_date=today, fields="close")
-        except Exception as e:
-            raise RuntimeError(f"拉取 ETF {code} 行情失败：{e}")
-
-        if fund.empty:
-            raise RuntimeError(f"找不到 {code} 当日行情，请检查代码或是否停牌")
-        px = float(fund["close"].iat[0])
-    else:
-        px = row.iat[0]
-
-    qty = int(cfg["cash"] * ratio // (px * lot)) * lot
-    if qty >= lot:
-        # 生成 6 位代码（批量下单模板不带后缀）
-        orders.append([code.split(".")[0], "B", 0, qty])
+# ---------------------------------------------------------------------
+# ETF / 股票下单辅助
+# ---------------------------------------------------------------------
+def _sec_to_ts(code6: str, frame: pd.DataFrame) -> str | None:
+    """把 6 位证券代码映射回 ts_code（可能上交、深交）"""
+    rows = frame[frame["ts_code"].str.startswith(code6)]
+    return rows["ts_code"].iat[0] if not rows.empty else None
 
 
-# —— α 买单
-if alpha_codes:
-    cash_each = cfg["cash"] * cfg["alpha_ratio"] / len(alpha_codes)
-    for c in alpha_codes:
-        px  = df.loc[df["ts_code"] == c, "close"].iat[0] * 1.01   # +1% 保护滑点
-        qty = int(cash_each // (px * LOT_STK)) * LOT_STK
-        if qty >= LOT_STK:
-            orders.append([c.split(".")[0], "B", round(px, 2), qty])
+def _add_stock(row: pd.Series):
+    global cash_left
+    sec6 = row["ts_code"][:6]
+    price = round(row["close"] * 1.01, 2)                   # 买价加 1% 滑点
+    qty = (CFG["alpha_cash"] // CFG["num_alpha"]) // price  // LOT_STK * LOT_STK
+    if qty < LOT_STK:
+        return
+    cash_left -= price * qty
+    orders.append([sec6, "B", 0, int(qty)])
 
-# ---------------- 4) 止损 / 止盈卖单 ----------------
-state = {"equity": cfg["cash"], "max_equity": cfg["cash"], "position": {}}
+
+def _add_etf(code_ts: str, ratio: float, lot: int):
+    global cash_left
+    code6 = code_ts[:6]
+    px_series = df[df["ts_code"] == code_ts]["close"]
+    if px_series.empty:
+        raise RuntimeError(f"找不到 {code6}.{code_ts[-2:]} 当日行情，请检查 ETF 代码或是否停牌")
+
+    price = px_series.iat[0]
+    alloc_cash = CFG["cash"] * ratio
+    qty = int((alloc_cash // price) // lot * lot)
+    if qty <= 0:
+        return
+    cash_left -= price * qty
+    orders.append([code6, "B", 0, qty])
+
+
+# ------------------------ 1. α 股票买入 -------------------------------
+for _, r in df.iterrows():
+    _add_stock(r)
+
+# ------------------------ 2. ETF 配置 ---------------------------------
+_add_etf(CFG["core_etf"],  CFG["core_ratio"],  LOT_STK)
+_add_etf(CFG["bond_etf"],  CFG["bond_ratio"],  LOT_ETF)
+
+# ------------------------ 3. 止盈 / 止损 ------------------------------
+state: Dict = {"equity": CFG["cash"],
+               "max_equity": CFG["cash"],
+               "position": {}}
 if STATE_FP.exists():
     state = json.load(STATE_FP.open())
 
 new_pos = state["position"].copy()
 
-for code, info in list(new_pos.items()):
-    cur_px_s = df.loc[df["ts_code"] == code, "close"]
-    if cur_px_s.empty:
+for ts_code, info in list(state["position"].items()):
+    px_series = df.loc[df["ts_code"] == ts_code, "close"]
+    if px_series.empty:
         continue
-    cur_px = cur_px_s.iat[0]
+    cur_px = px_series.iat[0]
     ret = (cur_px - info["cost"]) / info["cost"]
-    code6 = code.split(".")[0]
 
-    if any(o[0] == code6 and o[1] == "S" for o in orders):
-        continue  # 已有卖单
+    # 当天已有卖单就不重复
+    if any(o[0] == ts_code[:6] and o[1] == "S" for o in orders):
+        continue
 
     # 止损
-    if ret <= -cfg["stop_loss"]:
-        orders.append([code6, "S", 0, info["qty"]])
-        del new_pos[code]
-        logger.info(f"{code} 跌破止损，清仓")
+    if ret <= -CFG["stop_loss"]:
+        orders.append([ts_code[:6], "S", 0, info["qty"]])
+        del new_pos[ts_code]
+        logger.info(f"{ts_code} 跌破止损，清仓")
+    # 止盈：卖掉一半（向下取整到手数）
+    elif ret >= CFG["take_profit"]:
+        half_qty = (info["qty"] // LOT_STK // 2) * LOT_STK
+        if half_qty >= LOT_STK:
+            orders.append([ts_code[:6], "S", 0, half_qty])
+            new_pos[ts_code]["qty"] -= half_qty
+            logger.info(f"{ts_code} 浮盈≥{CFG['take_profit']*100:.1f}%，卖出 {half_qty}")
 
-    # 止盈（卖出一半）
-    elif ret >= cfg["take_profit"]:
-        sell_qty = (info["qty"] // LOT_STK // 2) * LOT_STK
-        if sell_qty >= LOT_STK:
-            orders.append([code6, "S", 0, sell_qty])
-            new_pos[code]["qty"] -= sell_qty
-            logger.info(f"{code} 浮盈 ≥{cfg['take_profit']*100:.0f}%，卖出一半 {sell_qty}")
+# ------------------------ 4. 合并买卖冲突 -----------------------------
+# 若同一只股票既有 S 又有 B，合并净数量
+order_df = (pd.DataFrame(orders, columns=["sec", "flag", "price", "qty"])
+              .groupby(["sec", "flag"])
+              .agg({"qty": "sum"})
+              .reset_index())
 
-# ---------------- 5) 把买单加入持仓 ----------------
-for sec, direc, price, qty in orders:
-    if direc == "B":
-        ts_row = df[df["ts_code"].str.startswith(sec)]
-        if ts_row.empty:
-            continue
-        ts_code = ts_row["ts_code"].iat[0]
-        cost = price or ts_row["close"].iat[0]
+net_orders = []
+for sec in order_df["sec"].unique():
+    b_qty = order_df.query("sec == @sec and flag == 'B'")["qty"].sum()
+    s_qty = order_df.query("sec == @sec and flag == 'S'")["qty"].sum()
+    net = b_qty - s_qty
+    if net > 0:
+        net_orders.append([sec, "B", 0, int(net)])
+    elif net < 0:
+        net_orders.append([sec, "S", 0, int(-net)])
+
+orders = net_orders
+
+# ------------------------ 5. 更新持仓快照 ------------------------------
+for sec, flag, _, qty in orders:
+    ts_code = _sec_to_ts(sec, df)
+    if not ts_code:
+        continue
+    if flag == "B":
+        pos = new_pos.get(ts_code, {"cost": 0, "qty": 0})
+        cur_px = df.loc[df["ts_code"] == ts_code, "close"].iat[0]
+        total_cost = pos["cost"] * pos["qty"] + cur_px * qty
+        total_qty = pos["qty"] + qty
+        new_pos[ts_code] = {"cost": total_cost / total_qty, "qty": total_qty}
+    else:  # S
         if ts_code in new_pos:
-            pos = new_pos[ts_code]
-            tot_cost = pos["cost"] * pos["qty"] + cost * qty
-            tot_qty  = pos["qty"] + qty
-            new_pos[ts_code]["cost"] = tot_cost / tot_qty
-            new_pos[ts_code]["qty"]  = tot_qty
-        else:
-            new_pos[ts_code] = {"cost": cost, "qty": qty}
+            new_pos[ts_code]["qty"] -= qty
 
+# 去掉空仓
+new_pos = {k: v for k, v in new_pos.items() if v["qty"] > 0}
 state["position"] = new_pos
-with STATE_FP.open("w", encoding="utf-8") as f:
+
+with open(STATE_FP, "w", encoding="utf-8") as f:
     json.dump(state, f, indent=2, ensure_ascii=False)
 
-# ---------------- 6) 输出 CSV ----------------
+# ------------------------ 6. 输出 CSV ---------------------------------
 csv = pd.DataFrame(orders, columns=["证券代码", "买卖标志", "委托价格", "委托数量"])
 fn = CSV_DIR / f"orders_{td}.csv"
 csv.to_csv(fn, index=False, encoding="utf-8-sig")
