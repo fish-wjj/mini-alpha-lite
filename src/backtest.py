@@ -72,7 +72,7 @@ for i in tqdm(range(len(rebal_dates) - 1)):
             ).set_index("trade_date")["close"]
             all_stock_px[c] = px
     # 3) 当期收益
-date0_str = d0.strftime("%Y%m%d")
+    date0_str = d0.strftime("%Y%m%d")
     date1_str = d1.strftime("%Y%m%d")
 
     # --- 计算 ETF 收益（增加健壮性检查）---
