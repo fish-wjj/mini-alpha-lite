@@ -17,7 +17,6 @@ from tqdm import tqdm
 from loguru import logger
 
 from src.config import load_cfg
-# ★ 修改点：同时导入 latest_trade_date 和 prev_trade_date
 from src.utils import build_today_universe, latest_trade_date, prev_trade_date, safe_query, pro
 from src.factor_model import score
 
@@ -25,7 +24,6 @@ plt.switch_backend("Agg")  # 无显示环境也能画图
 
 CFG = load_cfg()
 START = "20180102"  # 第一调仓日前一天
-# ★ 修改点：使用 latest_trade_date
 END = latest_trade_date()       # 最新一个可用价
 
 REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
@@ -58,7 +56,6 @@ for i in tqdm(range(len(rebal_dates) - 1)):
     prev_d0 = prev_trade_date(d0.strftime("%Y%m%d"))
 
     # 1) 上月末数据 → 选股
-    # ★ 修改点：增加对 uni 是否为空的检查
     uni = build_today_universe(prev_d0)
     if uni.empty:
         logger.warning(f"未能为 {prev_d0} 构建股票池，将使用空的股票列表进行下一步")
@@ -80,7 +77,6 @@ for i in tqdm(range(len(rebal_dates) - 1)):
             all_stock_px[c] = px
             
     # 3) 当期收益
-    # ★ 修改点：替换为完整的健壮性检查和收益计算逻辑
     date0_str = d0.strftime("%Y%m%d")
     date1_str = d1.strftime("%Y%m%d")
 
@@ -122,15 +118,15 @@ for i in tqdm(range(len(rebal_dates) - 1)):
            CFG["bond_ratio"] * r_bond +
            CFG["alpha_ratio"] * r_alpha_mean)
 
-
     equity.append(equity[-1] * (1 + ret))
     dates.append(d1)
 
 # ─────────────────── 结果输出 ─────────────────────────
 rep = pd.DataFrame({"date": dates, "equity": equity[1:]})
-rep["cummax"] = rep.equity.cummax()
-rep["drawdown"] = rep.equity / rep.cummax - 1
-rep["ret"] = rep.equity.pct_change().fillna(0)
+# ★ 修改点：使用方括号访问列
+rep["cummax"] = rep["equity"].cummax()
+rep["drawdown"] = rep["equity"] / rep["cummax"] - 1
+rep["ret"] = rep["equity"].pct_change().fillna(0)
 rep.to_csv(REPORT_DIR / "backtest_report.csv", index=False)
 
 plt.figure(figsize=(9, 4))
