@@ -1,6 +1,6 @@
 .env*
 db.sqlite
-orders_*.csv
+*.csv
 
 # Bytecode / logs
 __pycache__/
